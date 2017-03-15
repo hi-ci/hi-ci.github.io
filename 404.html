@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" type="text/css" href="https://www.w3schools.com/w3css/3/w3.css" />
+    <script src="https://www.w3schools.com/lib/w3.js"></script>
+</head>
+<body>
+
+<div id="home" style="visibility: hidden">
+Hi CI
+</div>
+
+<div id="projects" class="w3-panel w3-animate-bottom" style="visibility: hidden">
+    <table class="w3-table-all w3-card-4">
+    <tr class="w3-teal">
+        <th>name</th>
+        <th>last build nr.</th>
+        <th>activity</th>
+        <th>last build time</th>
+        <th>last result</th>
+    </tr><tr w3-repeat="projects">
+        <td><a href="{{project_uri}}">{{name}}</a></td>
+        <td>{{lastBuildLabel}}</td>
+        <td>{{activity}}</td>
+        <td>{{lastBuildTime}}</td>
+        <td class="{{rclass}}">{{lastBuildStatus}}</td>
+    </tr>
+    </table>
+</div>
+
+<div id="jobs" class="w3-panel w3-animate-bottom" style="visibility: hidden">
+    <table class="w3-table-all w3-card-4">
+    <tr class="w3-teal" onclick="hideBuild()">
+        <th>number</th>
+        <th>branch</th>
+        <th>commit</th>
+        <th>event</th>
+        <th>start</th>
+        <th>lead time</th>
+        <th>result</th>
+        <th id="busy">info</th>
+    </tr><tr id="job-{{id}}" onclick="setBusy(true); toggleBuild({{id}})" w3-repeat="jobs">
+        <td title="{{id}}"><a href="{{build_uri}}">#{{number}}</a></td>
+        <td><a href="{{branch_uri}}">{{branch}}</a></td>
+        <td><a href="{{commit_uri}}">{{commit_short}}</a></td>
+        <td>{{event_type}}</td>
+        <td title="{{started_at}}">{{start_time}}</td>
+        <td title="{{lead_time}}">{{pretty_lead_time}}</td>
+        <td class="{{rclass}}">{{result}}</td>
+        <td>
+            <a href="{{api_uri}}">api</a>
+        </td>
+    </tr>
+    </table>
+</div>
+
+<script>
+var params = location.search.substring(1).split("&");
+var path = location.pathname.substring(1);
+var path_param = false;
+var user = "";
+var proj = "";
+var slug = "";
+var cache = {};
+var other;
+
+for (p in params) {
+	var pair = params[p].split("=");
+
+	if (pair[0] == "path") {
+		path = unescape(pair[1]).substring(1);
+		path_param = true;
+	}
+}
+
+path = path.split("/");
+if (path[0] != null && path[0] != "") {
+	user = path[0];
+}
+if (path[1] != null && path[1] != "") {
+	proj = path[1];
+}
+
+if (user != "" && proj != "") {
+	slug = user + "/" + proj;
+	document.title = "Loading - " + slug;
+	w3.getHttpObject("https://api.travis-ci.org/repos/" + slug + "/builds", displayBuilds);
+
+	removeChildNode(document.getElementById("home"));
+	removeChildNode(document.getElementById("projects"));
+} else if (user != "") {
+	slug = user;
+	document.title = "Loading - " + user;
+	w3.getHttpData("https://api.travis-ci.org/repos/" + user, function (data) {
+		displayProjects(xml2json(data));
+	});
+	removeChildNode(document.getElementById("home"));
+	removeChildNode(document.getElementById("jobs"));
+} else {
+	document.getElementById("home").style.visibility = "visible";
+	removeChildNode(document.getElementById("projects"));
+	removeChildNode(document.getElementById("jobs"));
+}
+
+function removeChildNode(node)
+{
+	if (node != null) {
+		node.parentNode.removeChild(node);
+	}
+}
+
+function prettyTime(delta)
+{
+	var pretty;
+
+	if (delta == null ) {
+		pretty = "n/a";
+	} else if (delta < 60) {
+		pretty = Math.floor(delta) + "s";
+	} else if (delta < 3600) {
+		pretty = Math.floor(delta / 60) + "m";
+	} else if (delta < 86400) {
+		pretty = Math.floor(delta / 3600) + "h";
+	} else {
+		pretty = Math.floor(delta / 86400) + "d";
+	}
+
+	return pretty;
+}
+
+function xml2json(xml)
+{
+	var xmlDoc;
+	var json = [];
+
+	if (window.DOMParser) {
+		parser = new DOMParser();
+		xmlDoc = parser.parseFromString(xml, "text/xml");
+	} else {
+		xmlDoc = new ActiveXObject("Microsoft.XMLDOM");
+		xmlDoc.async = false;
+		xmlDoc.loadXML(xml);
+	}
+
+	var projects = xmlDoc.getElementsByTagName("Project");
+	for (i=0; i < projects.length; i++) {
+		var p = {}
+		p.name = projects[i].getAttribute("name");
+		p.activity = projects[i].getAttribute("activity");
+		p.lastBuildLabel = projects[i].getAttribute("lastBuildLabel");
+		p.lastBuildStatus = projects[i].getAttribute("lastBuildStatus");
+		p.lastBuildTime = prettyTime((new Date() - new Date(projects[i].getAttribute("lastBuildTime"))) / 1000);
+
+		if (path_param == true) {
+			p.project_uri = location.pathname + "?path=/" + encodeURIComponent(p.name);
+		} else {
+			p.project_uri = "/" + p.name;
+		}
+		json.push(p);
+	}
+
+	return json;
+}
+
+function controlBuild(job)
+{
+	var now = new Date().getTime();
+	var started = new Date(job.started_at);
+	var delta = Math.floor((now - started) / 1000);
+
+	job.lead_time = "";
+
+	if (job.started_at != null) {
+		job.start_time = "~ " + prettyTime(delta) + " ago";
+	} else {
+		job.start_time = "n/a";
+	}
+
+	if (job.started_at == null) {
+		job.pretty_lead_time = "n/a";
+	} else if (job.finished_at == null) {
+		job.pretty_lead_time = delta + "s";
+	} else {
+		var finished = new Date(job.finished_at);
+		var secs = (finished - started) / 1000;
+		job.lead_time = secs + "s";
+		job.pretty_lead_time = "~ " + prettyTime(secs);
+	}
+
+	if (job.result == "0") {
+		job.result = "success";
+		job.rclass = "w3-text-green";
+	} else if (job.state == "finished") {
+		job.result = "failure";
+		job.rclass = "w3-text-red";
+	} else if (job.started_at != null && job.finished_at == null) {
+		job.result = "started";
+		job.rclass = "w3-text-orange";
+	} else if (job.finished_at == null) {
+		job.result = "created";
+		job.rclass = "w3-text-cyan";
+	} else {
+		job.result = "failure";
+		job.rclass = "w3-text-red";
+	}
+
+	if (job.commit != null) {
+		job.commit_short = job.commit.substring(0, 7);
+	}
+	if (job.event_type != null) {
+		job.event_type = job.event_type.replace("_", " ");
+	}
+
+	if (job.started_at == null) {
+		// this is to fix the tooltip
+		job.started_at = "";
+	}
+
+	job.api_uri = "https://prettify.github.io/?uri=" + encodeURIComponent("https://api.travis-ci.org/" + slug + "/builds/" + job.id);
+	job.build_uri = "https://travis-ci.org/" + slug + "/builds/" + job.id;
+	job.branch_uri = "https://github.com/" + slug + "/tree/" + job.commit;
+	job.commit_uri = "https://github.com/" + slug + "/commit/" + job.commit;
+}
+
+function displayProjects(projects)
+{
+	if (projects.length > 0) {
+		w3.displayObject("projects", { projects: projects });
+		document.getElementById("projects").style.visibility = "visible";
+	}
+	document.title = slug;
+}
+
+function displayBuilds(jobs)
+{
+	var pending = false;
+
+	for (j in jobs) {
+		controlBuild(jobs[j]);
+		pending = pending || jobs[j].state != "finished";
+	}
+
+	if (jobs.length > 0) {
+		w3.displayObject("jobs", { jobs: jobs });
+
+		for (i in cache) {
+			toggleBuild(i, pending);
+		}
+
+		document.getElementById("jobs").style.visibility = "visible";
+		document.title = slug;
+	}
+
+	if (pending) {
+		w3.removeClass("#jobs", "w3-animate-bottom");
+		setTimeout(function () {
+			w3.getHttpObject("https://api.travis-ci.org/repos/" + slug + "/builds", displayBuilds);
+		}, 2500);
+	}
+}
+
+function jobRender(job)
+{
+	var details = job.config.os;
+	var ret = "";
+
+	if (job.config.compiler != null) {
+		details += ", " + job.config.compiler
+	}
+
+	if (job.config.env != null) {
+		details += ", " + job.config.env.replace(' ', ', ');
+	}
+
+	details = "<a href='https://api.travis-ci.org/jobs/" + job.id + "/log.txt?deansi=true' style='white-space: nowrap' title='" + details + "'>" + details + "</a>";
+
+	ret += "<td><a title='" + job.id + "' href='https://travis-ci.org/" + slug + "/jobs/" + job.id + "'>#" + job.number + "</a></td>";
+	ret += "<td colspan='3' style='overflow: hidden; text-overflow: ellipsis; max-width: 450px'>&nbsp;&nbsp;&nbsp;&nbsp;<i>" + details + "</i></td>";
+	ret += "<td title='" + job.started_at + "'>" + job.start_time + "</td>";
+	ret += "<td title='" + job.lead_time + "'>" + job.pretty_lead_time + "</td>";
+	ret += "<td class='" + job.rclass + "'>" + job.result + "</td>";
+	ret += "<td>";
+	ret += "<a href='https://prettify.github.io/?uri=" + encodeURIComponent("https://api.travis-ci.org/jobs/" + job.id) + "'>api</a> ";
+	ret += "</td>";
+	return ret;
+}
+
+function hideBuild(job)
+{
+	var jobClass = (job == null) ? "job" : ("job-" + job);
+	var rows = document.getElementsByClassName(jobClass);
+	var count = rows.length;
+
+	if (job == null) {
+		cache = {};
+	}
+
+	while (rows.length > 0) {
+		rows[0].parentNode.removeChild(rows[0]);
+		rows = document.getElementsByClassName(jobClass);
+	}
+
+	return count;
+}
+
+function displayBuild(job, pending)
+{
+	var anim = [ " w3-animate-right", " w3-animate-left" ];
+	var count = 0;
+
+	var p = document.getElementById("job-" + job);
+
+	if (p == null) {
+		console.log("can't find element #job-" + job);
+		return;
+	}
+
+	for (i in cache[job].matrix) {
+		var tr = document.createElement("tr");
+		tr.innerHTML = jobRender(cache[job].matrix[i]);
+		tr.className += "job job-" + job;
+
+		if (pending == null) {
+			tr.className += anim[count % 2];
+		}
+
+		if (p.nextSibling != null) {
+			p.parentNode.insertBefore(tr, p.nextSibling);
+		} else {
+			p.parentNode.appendChild(tr);
+		}
+
+		p = p.nextSibling;
+		count++;
+	}
+}
+
+function setBusy(busy)
+{
+	var b = document.getElementById("busy");
+
+	if (b == null) {
+		console.log("can't find element #busy");
+		return;
+	}
+
+	if (busy == true) {
+		b.style += "; font-style: italic;";
+	} else {
+		b.style += "; font-style: normal;";
+	}
+}
+
+function toggleBuild(job, pending)
+{
+	if (hideBuild(job) > 0) {
+		delete cache[job];
+		setBusy(false);
+		return;
+	}
+
+	if (cache[job] != null) {
+		displayBuild(job, pending);
+
+		if (cache[job].state == "finished") {
+			setBusy(false);
+			return;
+		}
+	}
+
+	w3.getHttpObject("https://api.travis-ci.org/repos/" + slug + "/builds/" + job, function (obj) {
+		for (i in obj.matrix) {
+			controlBuild(obj.matrix[i]);
+		}
+		hideBuild(job);
+		cache[job] = obj;
+		displayBuild(job, pending);
+		setBusy(false);
+	});
+}
+</script>
+</body>
+</html>
